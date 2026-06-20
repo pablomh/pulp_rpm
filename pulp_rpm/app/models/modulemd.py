@@ -75,6 +75,12 @@ class Modulemd(Content):
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
         unique_together = ("_pulp_domain", "name", "stream", "version", "context", "arch", "digest")
+        indexes = [
+            models.Index(
+                fields=["_pulp_domain", "name", "stream", "version", "context", "arch"],
+                name="rpm_modulemd_nsvca_domain_idx",
+            ),
+        ]
 
 
 class ModulemdDefaults(Content):
