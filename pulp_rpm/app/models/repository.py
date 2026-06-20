@@ -8,7 +8,10 @@ from aiohttp.web_response import Response
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
+from django.db.models import Q
+from django_guid import get_guid
 
+from pulpcore.exceptions import DuplicateContentInRepositoryError
 from pulpcore.plugin.download import DownloaderFactory
 from pulpcore.plugin.models import (
     Artifact,
@@ -26,6 +29,8 @@ from pulpcore.plugin.models import (
     RepositoryVersion,
 )
 from pulpcore.plugin.repo_version_utils import (
+    collect_duplicates,
+    count_duplicates,
     remove_duplicates,
     validate_duplicate_content,
     validate_version_paths,
@@ -430,7 +435,7 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
 
         resolve_module_packages(new_version, previous_version)
 
-        self._apply_retention_policy(new_version)
+        self._apply_retention_policy(new_version, previous_version)
 
         from pulp_rpm.app.advisory import resolve_advisories  # avoid circular import
 
@@ -447,7 +452,7 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
         # The validate_version_paths() test checks for different-nevras, but same relative-path,
         # and raises an exception. Because of these odd repositories, this can't be fatal - so
         # we warn about it, but continue. At publish, we will have to pick one.
-        validate_duplicate_content(new_version)
+        self._validate_duplicate_content(new_version, previous_version)
         try:
             validate_version_paths(new_version)
         except ValueError as ve:
@@ -458,7 +463,68 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
                 ).format(repo=new_version.repository.name, value_errors=str(ve))
             )
 
-    def _apply_retention_policy(self, new_version):
+    def _validate_duplicate_content(self, new_version, previous_version):
+        """Validate duplicate content without rescanning an unchanged base version."""
+        if previous_version is None:
+            validate_duplicate_content(new_version)
+            return
+
+        added_content = new_version.added(base_version=previous_version)
+        correlation_id = get_guid()
+        dup_found = False
+        dup_count = 0
+
+        for type_obj in new_version.repository.CONTENT_TYPES:
+            if type_obj.repo_key_fields == ():
+                continue
+
+            pulp_type = type_obj.get_pulp_type()
+            unique_keys = type_obj.repo_key_fields
+            content_qs = type_obj.objects.filter(
+                pk__in=added_content.filter(pulp_type=pulp_type),
+            )
+            type_dup_count = count_duplicates(content_qs, unique_keys)
+            dup_count += type_dup_count
+            if type_dup_count > 0:
+                dup_found = True
+                for duplicate in collect_duplicates(content_qs, unique_keys):
+                    log.info(
+                        "Duplicates found: %s=%s; %s=%s; %s=%s",
+                        "pulp_type",
+                        pulp_type,
+                        "keyset_value",
+                        duplicate.keyset_value,
+                        "duplicate_pks",
+                        duplicate.duplicate_pks,
+                    )
+
+        if dup_found:
+            raise DuplicateContentInRepositoryError(dup_count, correlation_id)
+
+    def _retention_group_filter(self, touched_groups):
+        """Build a queryset filter for the touched (name, arch) package groups."""
+        group_filter = Q()
+        for name, arch in touched_groups:
+            group_filter |= Q(name=name, arch=arch)
+        return group_filter
+
+    def _touched_retention_groups(self, new_version, previous_version):
+        """Return the non-modular package groups affected by the version delta."""
+        package_pulp_type = Package.get_pulp_type()
+        touched_groups = set()
+        for content_qs in (
+            new_version.added(base_version=previous_version),
+            new_version.removed(base_version=previous_version),
+        ):
+            touched_groups.update(
+                Package.objects.filter(
+                    pk__in=content_qs.filter(pulp_type=package_pulp_type),
+                    is_modular=False,
+                ).values_list("name", "arch")
+            )
+        return touched_groups
+
+    def _apply_retention_policy(self, new_version, previous_version=None):
         """Apply the repository's "retain_package_versions" settings to the new version.
 
         Remove all non-modular packages that are older than the retention policy. A value of 0
@@ -481,12 +547,20 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
             # django-managed and would be difficult to share.
             #
             # Instead we have to do the filtering manually.
-            nonmodular_packages = annotate_with_age(
-                Package.objects.filter(
-                    pk__in=new_version.content.filter(pulp_type=Package.get_pulp_type()),
-                    is_modular=False,  # don't want to filter out modular RPMs
-                ).only("pk")
+            nonmodular_packages = Package.objects.filter(
+                pk__in=new_version.content.filter(pulp_type=Package.get_pulp_type()),
+                is_modular=False,  # don't want to filter out modular RPMs
             )
+
+            if previous_version is not None:
+                touched_groups = self._touched_retention_groups(new_version, previous_version)
+                if not touched_groups:
+                    return
+                nonmodular_packages = nonmodular_packages.filter(
+                    self._retention_group_filter(touched_groups)
+                )
+
+            nonmodular_packages = annotate_with_age(nonmodular_packages.only("pk"))
 
             old_packages = []
             for package in nonmodular_packages:
