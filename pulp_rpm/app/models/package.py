@@ -275,6 +275,10 @@ class Package(Content):
         )
         indexes = [
             models.Index(fields=["name", "arch", "evr"]),
+            models.Index(
+                fields=["_pulp_domain", "name", "epoch", "version", "release", "arch"],
+                name="rpm_package_nevra_domain_idx",
+            ),
         ]
         permissions = [
             ("upload_rpm_packages", "Can upload RPM packages using synchronous API."),
