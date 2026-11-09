@@ -12,6 +12,7 @@
       "source_repo_version": { "type": "string" },
       "dest_repo": { "type": "string" },
       "dest_base_version": { "type": "integer" },
+      "dest_base_version_href": { "type": "string" },
       "content": {
         "type": "array",
         "items": { "type": "string" }

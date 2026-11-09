@@ -759,6 +759,105 @@ def test_copy_multiple_sources_to_same_destination_mismatched_base_version_with_
     assert "dest_base_version" in exc.value.body
 
 
+@pytest.mark.parallel
+def test_copy_with_cross_repository_base_version_href(
+    monitor_task,
+    rpm_copy_api,
+    rpm_package_api,
+    rpm_repository_api,
+    rpm_repository_factory,
+    single_package_repo_factory,
+):
+    """A new version can be based on a version that lives in another repository."""
+    src, package = single_package_repo_factory()
+    base_repo, base_package = single_package_repo_factory()
+    dest = rpm_repository_factory()
+
+    data = Copy(
+        config=[
+            {
+                "source_repo_version": src.latest_version_href,
+                "dest_repo": dest.pulp_href,
+                "dest_base_version_href": base_repo.latest_version_href,
+                "content": [package.pulp_href],
+            }
+        ],
+        dependency_solving=False,
+    )
+    monitor_task(rpm_copy_api.copy_content(data).task)
+
+    dest = rpm_repository_api.read(dest.pulp_href)
+    assert _package_names(rpm_package_api, dest.latest_version_href) == {
+        base_package.name,
+        package.name,
+    }
+
+
+@pytest.mark.parallel
+def test_copy_with_cross_repository_base_version_href_and_solving(
+    monitor_task,
+    rpm_copy_api,
+    rpm_package_api,
+    rpm_repository_api,
+    rpm_repository_factory,
+    single_package_repo_factory,
+):
+    """Solving must create the version in the destination, not in the base version's repository."""
+    src, package = single_package_repo_factory()
+    base_repo, base_package = single_package_repo_factory()
+    base_version_href = base_repo.latest_version_href
+    dest = rpm_repository_factory()
+
+    data = Copy(
+        config=[
+            {
+                "source_repo_version": src.latest_version_href,
+                "dest_repo": dest.pulp_href,
+                "dest_base_version_href": base_version_href,
+                "content": [package.pulp_href],
+            }
+        ],
+        dependency_solving=True,
+    )
+    monitor_task(rpm_copy_api.copy_content(data).task)
+
+    dest = rpm_repository_api.read(dest.pulp_href)
+    assert _package_names(rpm_package_api, dest.latest_version_href) == {
+        base_package.name,
+        package.name,
+    }
+    assert rpm_repository_api.read(base_repo.pulp_href).latest_version_href == base_version_href
+
+
+@pytest.mark.parallel
+def test_copy_rejects_both_base_version_forms(
+    rpm_copy_api,
+    rpm_repository_factory,
+    single_package_repo_factory,
+):
+    """dest_base_version and dest_base_version_href are mutually exclusive."""
+    src, package = single_package_repo_factory()
+    base_repo, _ = single_package_repo_factory()
+    dest = rpm_repository_factory()
+
+    data = Copy(
+        config=[
+            {
+                "source_repo_version": src.latest_version_href,
+                "dest_repo": dest.pulp_href,
+                "dest_base_version": 0,
+                "dest_base_version_href": base_repo.latest_version_href,
+                "content": [package.pulp_href],
+            }
+        ],
+        dependency_solving=False,
+    )
+    with pytest.raises(ApiException) as exc:
+        rpm_copy_api.copy_content(data)
+    assert exc.value.status == 400
+    assert "dest_base_version" in exc.value.body
+
+
 class TestCopyWithKickstartRepoSyncedImmediate:
     def test_kickstart_content(
         self,

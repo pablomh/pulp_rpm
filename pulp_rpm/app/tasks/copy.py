@@ -216,11 +216,10 @@ def copy_content(config, dependency_solving, dependency_upgrade=False):
         # Dependency Solving Branch
         # =========================
 
-        # TODO: a more structured way to store this state would be nice.
         content_to_copy = {}
-        repo_mapping = {}
+        # source repo version -> (destination version, destination repo, base provided)
+        destinations = {}
         libsolv_repo_names = {}
-        base_versions = {}
 
         solver = Solver()
 
@@ -233,8 +232,11 @@ def copy_content(config, dependency_solving, dependency_upgrade=False):
                 dest_version_provided,
             ) = process_entry(entry)
 
-            repo_mapping[source_repo_version] = dest_repo_version
-            base_versions[source_repo_version] = dest_version_provided
+            destinations[source_repo_version] = (
+                dest_repo_version,
+                dest_repo,
+                dest_version_provided,
+            )
 
             # Load the content from the source and destination repository versions into the solver
             source_repo_name = solver.load_source_repo(source_repo_version)
@@ -270,9 +272,9 @@ def copy_content(config, dependency_solving, dependency_upgrade=False):
         dest_content = {}
         for from_repo, units in content_to_copy.items():
             src_repo_version = libsolv_repo_names[from_repo]
-            dest_repo_version = repo_mapping[src_repo_version]
-            base_version = dest_repo_version if base_versions[src_repo_version] else None
-            dest_repo = dest_repo_version.repository
+            dest_repo_version, dest_repo, base_provided = destinations[src_repo_version]
+            # The base version may live in another repository, so it cannot name the destination.
+            base_version = dest_repo_version if base_provided else None
             if dest_repo.pk not in dest_content:
                 dest_content[dest_repo.pk] = {
                     "repo": dest_repo,

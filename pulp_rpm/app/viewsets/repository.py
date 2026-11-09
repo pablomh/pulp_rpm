@@ -795,7 +795,14 @@ class CopyViewSet(viewsets.ViewSet):
             shared_repos.append(source_version.repository)
             exclusive_repos.append(dest_repo)
 
-            if "dest_base_version" in entry:
+            if "dest_base_version_href" in entry:
+                base_version = NamedModelViewSet().get_resource(
+                    entry["dest_base_version_href"], RepositoryVersion
+                )
+                r["dest_base_version"] = base_version.pk
+                if base_version.repository.pk != dest_repo.pk:
+                    shared_repos.append(base_version.repository)
+            elif "dest_base_version" in entry:
                 try:
                     r["dest_base_version"] = dest_repo.versions.get(
                         number=entry["dest_base_version"]

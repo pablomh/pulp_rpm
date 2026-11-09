@@ -673,6 +673,7 @@ class CopySerializer(ValidateFieldsMixin, serializers.Serializer):
             "source_repo_version": <RepositoryVersion [pulp_href|prn]>,
             "dest_repo": <RpmRepository [pulp_href|prn]>,
             "dest_base_version": <int>,
+            "dest_base_version_href": <RepositoryVersion [pulp_href|prn]>,
             "content": [<Content [pulp_href|prn]>, ...]
           },
           ...
@@ -758,9 +759,9 @@ class CopySerializer(ValidateFieldsMixin, serializers.Serializer):
                         _("Expected RpmRepository or RepositoryVersion ref_class. Got %s from %s.")
                         % (ref_class, href_or_prn)
                     )
-            except RepositoryVersion.DoesNotExit as e:
+            except RepositoryVersion.DoesNotExist as e:
                 raise serializers.ValidationError from e
-            except RpmRepository.DoesNotExit as e:
+            except RpmRepository.DoesNotExist as e:
                 raise serializers.ValidationError from e
 
             if resource_domain_pk != curr_domain.pk:
@@ -776,6 +777,8 @@ class CopySerializer(ValidateFieldsMixin, serializers.Serializer):
                 # Check required fields individually
                 check_domain(entry, "source_repo_version", curr_domain)
                 check_domain(entry, "dest_repo", curr_domain)
+                if entry.get("dest_base_version_href"):
+                    check_domain(entry, "dest_base_version_href", curr_domain)
 
                 # Check content generically to avoid timeout of multiple calls
                 content_list = entry.get("content", None)
@@ -802,6 +805,15 @@ class CopySerializer(ValidateFieldsMixin, serializers.Serializer):
                 raise serializers.ValidationError(
                     _("Provided copy criteria is invalid:'{}'").format(err)
                 )
+
+            for entry in data["config"]:
+                if "dest_base_version" in entry and "dest_base_version_href" in entry:
+                    raise serializers.ValidationError(
+                        _(
+                            "Config entries must specify at most one of 'dest_base_version' "
+                            "and 'dest_base_version_href'."
+                        )
+                    )
 
             if settings.DOMAIN_ENABLED:
                 check_cross_domain_config(data["config"])

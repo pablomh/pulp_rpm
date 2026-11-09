@@ -27,18 +27,17 @@ def has_perms_to_copy(request, view, action):
         ):
             return False
 
-        # Get source repo object
-        source_version = NamedModelViewSet().get_resource(
-            copy_action["source_repo_version"], RepositoryVersion
-        )
-
-        source_repo = RpmRepository.objects.get(pk=source_version.repository_id)
-
-        # Check if user has permissions to source repository
-        if not (
-            request.user.has_perm("rpm.view_rpmrepository", source_repo)
-            or request.user.has_perm("rpm.view_rpmrepository")
-        ):
-            return False
+        # A base version contributes its content to the new version just like a source does.
+        for field in ("source_repo_version", "dest_base_version_href"):
+            version_href = copy_action.get(field)
+            if not version_href:
+                continue
+            version = NamedModelViewSet().get_resource(version_href, RepositoryVersion)
+            repo = RpmRepository.objects.get(pk=version.repository_id)
+            if not (
+                request.user.has_perm("rpm.view_rpmrepository", repo)
+                or request.user.has_perm("rpm.view_rpmrepository")
+            ):
+                return False
 
     return True
