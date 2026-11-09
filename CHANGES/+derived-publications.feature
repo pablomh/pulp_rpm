@@ -1,0 +1,1 @@
+Publications can now be derived from a compatible base publication, reusing its metadata files and published artifacts and computing only the version delta. Incompatible bases fall back to a full publication.

@@ -622,6 +622,8 @@ class RpmPublicationViewSet(PublicationViewSet, RolesMixin):
         }
         if checkpoint:
             kwargs["checkpoint"] = True
+        if base_publication := serializer.validated_data.get("base_publication"):
+            kwargs["base_publication"] = base_publication.pk
         # If the repo or the api call had a layout specified, pass it to the publish task.
         if layout := serializer.validated_data.get("layout", repository.layout):
             kwargs["layout"] = layout

@@ -543,6 +543,24 @@ class RpmPublicationSerializer(PublicationSerializer):
             "A JSON document describing the config.repo file Pulp should generate for this repo"
         ),
     )
+    base_publication = DetailRelatedField(
+        required=False,
+        allow_null=True,
+        help_text=_(
+            "A publication to derive the metadata of this one from. Ignored when the base "
+            "publication is not compatible with the requested settings."
+        ),
+        view_name_pattern=r"publications(-.*/.*)?-detail",
+        queryset=RpmPublication.objects.exclude(complete=False),
+    )
+    metadata_signing_fingerprint = serializers.CharField(
+        read_only=True,
+        help_text=_("The fingerprint of the signing service whose key signed repomd.xml."),
+    )
+    metadata_fingerprints = serializers.JSONField(
+        read_only=True,
+        help_text=_("Canonical fingerprints of the publication's metadata, per record type."),
+    )
 
     def validate(self, data):
         """Validate data."""
@@ -554,6 +572,21 @@ class RpmPublicationSerializer(PublicationSerializer):
                 raise serializers.ValidationError(ALLOWED_PUBLISH_CHECKSUM_ERROR_MSG)
 
         validated_data = super().validate(data)
+
+        # A base publication contributes its content to the new publication just like the
+        # target repository does.
+        base = validated_data.get("base_publication")
+        request = self.context.get("request")
+        if base and request:
+            base_repo = base.repository_version.repository
+            if not (
+                request.user.has_perm("rpm.view_rpmrepository", base_repo)
+                or request.user.has_perm("rpm.view_rpmrepository")
+            ):
+                raise serializers.ValidationError(
+                    _("Base publication is not visible to this user.")
+                )
+
         return validated_data
 
     class Meta:
@@ -568,6 +601,9 @@ class RpmPublicationSerializer(PublicationSerializer):
             "repo_config",
             "compression_type",
             "layout",
+            "base_publication",
+            "metadata_signing_fingerprint",
+            "metadata_fingerprints",
         )
         model = RpmPublication
 

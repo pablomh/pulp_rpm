@@ -1,0 +1,1 @@
+Invalid copy configuration references now return a 400 response instead of raising a 500 error.
