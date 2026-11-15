@@ -17,7 +17,7 @@ import libcomps
 from django.conf import settings
 from django.core.files import File
 from django.db import IntegrityError
-from django.db.models import Count, Q
+from django.db.models import Q
 
 from pulpcore.plugin.models import (
     AsciiArmoredDetachedSigningService,
@@ -1693,18 +1693,13 @@ def _updateinfo_file(
             "updateinfo", f"updateinfo.xml{extension}", base_files, base_stats
         )
 
-    if (
-        UpdateRecord.objects.filter(pk__in=version.content)
-        .values("id")
-        .annotate(count=Count("id"))
-        .filter(count__gt=1)
-        .exists()
-    ):
+    # Counting beats a grouped existence check: grouping over the version's advisory ids
+    # costs a minute on large repositories, the two counts cost a fraction of a second.
+    advisories = UpdateRecord.objects.filter(pk__in=version.content)
+    if advisories.count() != advisories.values("id").distinct().count():
         raise _CannotDerive("duplicate advisory ids in the target version")
 
-    target_ids = set(
-        UpdateRecord.objects.filter(pk__in=version.content).values_list("id", flat=True)
-    )
+    target_ids = set(advisories.values_list("id", flat=True))
     records = {}
     if "updateinfo" in base_files:
         base_updates = cr.UpdateInfo(base_files["updateinfo"]).updates
